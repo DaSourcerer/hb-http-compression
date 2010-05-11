@@ -1,0 +1,7 @@
+<plugin>
+  <name>HTTP Output Compression</name>
+  <url>http://dasourcerer.net/projects#http-compression</url>
+  <author url="http://dasourcerer.net">Da:Sourcerer</author>
+  <license url="http://www.apache.org/licenses/LICENSE-2.0">Apache License 2.0</license>
+  <description><![CDATA[Adds HTTP output compression, thus greatly decreasing traffic costs]]></description>
+</plugin>

@@ -20,8 +20,9 @@
 /**
  * HTTP output compression plugin
  * 
- * @package HttpCompression
- * @version 1.0-beta
+ * @package Plugins
+ * @subpackage HttpCompression
+ * @version 1.0-beta2
  * @author Da:Sourcerer <http://dasourcerer.net>
  * @license http://www.apache.org/licenses/LICENSE-2.0 Apache License 2.0
  * @link http://dasourcerer.net/projects#http-compression
@@ -33,22 +34,32 @@ class HttpCompression extends Plugin {
   const DEFAULT_COMPRESSION_LEVEL = 4;
 
   /**
-   * A list of compression schemes understood by the client
+   * A list of possible content encoding names and the functions generating them
+   * @var array
+   */
+  private $encodings = array(
+    'gzip'    => 'gzencode',
+    'x-gzip'  => 'gzencode',
+    'deflate' => 'gzdeflate',
+    'bzip2'   => 'bzcompress',
+  );
+
+  /**
+   * A list of content encodings understood by the client
    * @var array
    */
   private $acceptedEncodings = array();
 
   /**
-   * A list of compression schemes supported by the server
+   * A list of content encodings supported by the server
    * @var array
    */
   private $supportedEncodings = array('identity');
 
-
   public function info() {
     return array(
       'name'        => 'HTTP Output Compression',
-      'version'     => '1.0-beta',
+      'version'     => '1.0-beta2',
       'url'         => 'http://dasourcerer.net/projects#http-compression',
       'author'      => 'Da:Sourcerer',
       'authorurl'   => 'http://dasourcerer.net',
@@ -62,15 +73,16 @@ class HttpCompression extends Plugin {
    * @return The name of a compression scheme or false if no matching scheme
    *         could be found
    */
-  private function getEncoding() {
+  private function get_encoding() {
     if(empty($this->acceptedEncodings)) {
       return false;
     }
 
+    if(ini_get('zlib.output_compression')) {
+      return false;
+    }
+
     $acceptedEncodings = explode(', ', $_SERVER['HTTP_ACCEPT_ENCODING']);
-    $supportedEncodings = array(
-      'gzip', 'x-gzip', 'deflate', 'compress', 'x-compress', 'bzip2',
-    );
 
     foreach($this->acceptedEncodings as $encoding) {
       if(in_array($encoding, $this->supportedEncodings)) {
@@ -81,24 +93,18 @@ class HttpCompression extends Plugin {
     return false;
   }
 
+  public function set_priorities() {
+    return array(
+      'filter_final_output' => 65536,
+    );
+  }
+
   public function action_init() {
     // Collect encodings supported by the server
-    if(function_exists('gzencode')) {
-      $this->supportedEncodings[] = 'gzip';
-      $this->supportedEncodings[] = 'x-gzip';
-    }
-
-    if(function_exists('gzcompress')) {
-      $this->supportedEncodings[] = 'compress';
-      $this->supportedEncodings[] = 'x-compress';
-    }
-
-    if(function_exists('gzdeflate')) {
-      $this->supportedEncodings[] = 'deflate';
-    }
-
-    if(function_exists('bzcompress')) {
-      $this->supportedEncodings[] = 'bzip2';
+    foreach($this->encodings as $encoding => $function) {
+      if(function_exists($function) && Options::get('http-compression__allow_ce_' . $function)) {
+        $this->supportedEncodings[] = $encoding;
+      }
     }
 
     // Collect encodings understood by the client
@@ -130,33 +136,38 @@ class HttpCompression extends Plugin {
   }
 
   public function filter_final_output($buffer) {
-    if($encoding = $this->getEncoding()) {
+    if(headers_sent()) {
+      return $buffer;
+    }
+
+    if(!empty($this->supportedEncodings)) {
+      header('Vary: Accept-Encoding');
+    }
+
+    if(Options::get('http-compression__remove_linebreaks')) {
+      $buffer = str_replace(array("\r", "\n"), '', $buffer);
+    }
+
+    if($encoding = $this->get_encoding()) {
       $compressionLevel = Options::get('http-compression__compression_level');
       if($compressionLevel === null) {
         $compressionLevel = self::DEFAULT_COMPRESSION_LEVEL;
       }
 
-      if($compressionLevel == 0) {
+      if($compressionLevel == 0 || strlen($buffer) < Options::get('http-compression__size_threshold')) {
         header('Content-Length: ' . strlen($buffer));
         return $buffer;
       }
 
-      header('Content-Encoding: ' . $encoding);
-      switch($encoding) {
-        case 'compress':
-        case 'x-compress':
-          $buffer = gzcompress($buffer, $compressionLevel);
-          break;
-        case 'gzip':
-        case 'x-gzip':
-          $buffer = gzencode($buffer, $compressionLevel);
-          break;
-        case 'deflate':
-          $buffer = gzdeflate($buffer, $compressionLevel);
-          break;
-        case 'bzip2':
-          $buffer = bzcompress($buffer, $compressionLevel);
-          break;
+      if($encoding == 'identity') {
+        header('Content-Encoding: identity');
+        header('Content-Length: ' . strlen($buffer));
+        return $buffer;
+      } else if(array_key_exists($encoding, $this->encodings)) {
+        $buffer = call_user_func($this->encodings[$encoding], $buffer, $compressionLevel);
+        header('Content-Encoding: ' . $encoding);
+        header('Content-Length: ' . strlen($buffer));
+        return $buffer;
       }
     }
 
@@ -176,9 +187,9 @@ class HttpCompression extends Plugin {
       switch($action) {
         case _t('Configure'):
           $ui = new FormUI(strtolower(get_class($this)));
-          $ui->append('static', 'help', _t('Set the level of compression. <em>0</em> means no compression at all, <em>9</em> is the highest possible compression (at the cost of highest CPU consumption.) You need to evaluate this a bit... Usually you\'d want a setting higher than <em>3</em> and lower than <em>7</em>.'));
-          $ui->append('radio', 'compression_level', 'option:http-compression__compression_level', _t('Compression level'), 'http-compression');
-          $ui->compression_level->options = array(
+          $clwrap = $ui->append('fieldset', 'cl', _t('Compression Level', 'http-compression'));
+          $clwrap->append('radio', 'compression_level', 'option:http-compression__compression_level', _t('Compression level', 'http-compression'));
+          $clwrap->compression_level->options = array(
             '0' => '0',
             '1' => '1',
             '2' => '2',
@@ -190,6 +201,12 @@ class HttpCompression extends Plugin {
             '8' => '8',
             '9' => '9',
           );
+          $ui->append('text', 'size_threshold', 'option:http-compression__size_threshold', _t('Size Threshold', 'http-compression'));
+          $ui->append('checkbox', 'remove_linebreaks', 'option:http-compression__remove_linebreaks', _t('Remove Linebreaks', 'http-compression'));
+          $cewrap = $ui->append('fieldset', 'ce', _t('Allowed Compression Methods', 'http-compression'));
+          foreach($this->encodings as $encoding => $function) {
+            $cewrap->append('checkbox', 'allow_ce_' . $function, 'option:http-compression__allow_ce_' . $function, _t($encoding, 'http-compression'));
+          }
           $ui->append('submit', 'save', _t('Save'));
           $ui->out();
           break;
@@ -199,28 +216,22 @@ class HttpCompression extends Plugin {
 
   public function help() {
     $help = <<< EOT
-<p>HTTP Output Compression allows to send compressed content to clients supporting this. See <a href="http://dasourcerer.net/http-output-compression-at-application-level">here</a> for more technical informations on how this works </p>
-<p>On the informative side, your <strong>client</strong> signalized support for the following compression schemes:
+<p>HTTP Output Compression allows to send compressed content to clients supporting this. See <a href="http://dasourcerer.net/http-output-compression-at-application-level">here</a> for more technical informations on how this works.</p>
+<p>
+The following options are available:
 <ul>
+  <li><strong>Compression level</strong><br>
+    Set the compression level. <kbd>0</kbd> means no compression at all, <kbd>9</kbd> is the highest possible compression (at the cost of highest CPU consumption.) You need to evaluate this a bit... usually you would want a setting higher than <kbd>3</kbd> and lower than <kbd>7</kbd>.</li>
+  <li><strong>Size Threshold</strong><br>
+    Set a compression threshold. Output having a size smaller than this value will not be compressed. Set this to <kbd>0</kbd> (or a negative value if you are feeling very funny) to disable.</li>
+  <li><strong>Remove Linebreaks</strong><br>
+    Remove linebreaking control characters (<kbd>\\r</kbd> and <kbd>\\n</kbd>) from the output before compression. This is relatively safe, as linebreaks usually do not have any meaning in XML/HTML. Switching this option on should help improving the compression part a bit. However, the delivered markup will be a bit... illegeble. If you are an evil admin wishing to drive theme designers into insanity, switch this on at all costs.</li>
+  <li><strong>Allowed Compression Methods</strong><br>
+    You can enabled or disable certain compression methods here. This allows you to immediately disable a misbehaving method.</li>
+</ul>
+</p>
 EOT;
-    foreach($this->acceptedEncodings as $encoding) {
-      $help .= '<li><kbd>' . $encoding . '</kbd></li>';
-    }
-    $help .= <<< EOT
-</ul></p>
-<p>Your <strong>server</strong> seems to support the following schemes:
-<ul>
-EOT;
-    foreach($this->supportedEncodings as $encoding) {
-      $help .= '<li><kbd>' . $encoding . '</kbd></li>';
-    }
-    $help .= <<< EOT
-</ul></p>
-<p>The plugin found the following scheme to be the best fit: 
-EOT;
-    $help .= $this->getEncoding();
-    $help .= '</kbd></p>';
-    return $help;
+    return _t($help);
   }
 }
 ?>

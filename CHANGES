@@ -1,0 +1,16 @@
+1.0-beta2
+ o Got rid of the compress transfer encoding. It's seeing little support anyway.
+ o Added threshold option
+ o Added optional new line removal
+ o Changed the priority of the filter_final_output method so it will hopefully
+   be the very last to be executed
+ o Started a plugin.xml
+ o The HTTP header Vary is now being sent to the client, making life easier for
+   proxies.
+ o Compression handling by the plugin is now deactivated if PHP's own
+   zlib.output_compression configuration directive is set
+ o Output compression is now prevented if http headers have already been sent
+   out to the client
+
+1.0-beta
+ o Started the entire thing
