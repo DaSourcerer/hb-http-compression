@@ -1,0 +1,16 @@
+================================================================================
+ == Introduction                                                             ==
+================================================================================
+
+  This plugin adds the ability to compress content before sending it to the
+  client to Habari. This helps a lot in both, conserving traffic and
+  decreasing page loading times.
+
+
+================================================================================
+ == Installation                                                             ==
+================================================================================
+
+  1.) Extract the content of this archive to user/plugins
+  2.) That's it ;) Configure the plugin in the admin pannel if you need to.
+
